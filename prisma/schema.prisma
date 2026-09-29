@@ -1,0 +1,225 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  FACULTY
+  STUDENT
+}
+
+enum FacilityStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+  RESERVED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  PENDING
+  CANCELLED
+  CONFLICT
+}
+
+enum ConflictType {
+  DOUBLE_BOOKING
+  CAPACITY_VIOLATION
+  EQUIPMENT_MISMATCH
+  SCHEDULING_OVERLAP
+  MAINTENANCE_CONFLICT
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  email         String    @unique
+  password_hash String
+  role          Role      @default(STUDENT)
+  department    String
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  bookings      Booking[]
+  requests      ResourceRequest[]
+  audit_logs    AuditLog[]
+
+  @@map("users")
+}
+
+model Facility {
+  id                    String              @id @default(uuid())
+  name                  String
+  type                  String
+  capacity              Int
+  building              String
+  floor                 Int
+  room_number           String
+  status                FacilityStatus      @default(AVAILABLE)
+  utilization_threshold Int                 @default(80)
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+
+  facility_equipment    FacilityEquipment[]
+  bookings              Booking[]
+  allocations           Allocation[]
+  maintenance_logs      Maintenance[]
+
+  @@index([type])
+  @@index([status])
+  @@index([capacity])
+  @@map("facilities")
+}
+
+model Equipment {
+  id                 String              @id @default(uuid())
+  name               String              @unique
+  facility_equipment FacilityEquipment[]
+  request_equipment  RequestEquipment[]
+
+  @@map("equipment")
+}
+
+model FacilityEquipment {
+  id           String    @id @default(uuid())
+  facility_id  String
+  equipment_id String
+  quantity     Int       @default(1)
+
+  facility     Facility  @relation(fields: [facility_id], references: [id], onDelete: Cascade)
+  equipment    Equipment @relation(fields: [equipment_id], references: [id], onDelete: Cascade)
+
+  @@unique([facility_id, equipment_id])
+  @@map("facility_equipment")
+}
+
+model Booking {
+  id             String        @id @default(uuid())
+  facility_id    String
+  user_id        String
+  department     String
+  date           String        // YYYY-MM-DD
+  start_time     String        // HH:mm
+  end_time       String        // HH:mm
+  purpose        String
+  status         BookingStatus @default(CONFIRMED)
+  priority       String        @default("MEDIUM")
+  students_count Int?
+  created_at     DateTime      @default(now())
+  updated_at     DateTime      @updatedAt
+
+  facility       Facility      @relation(fields: [facility_id], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  conflicts_a    Conflict[]    @relation("BookingAConflict")
+  conflicts_b    Conflict[]    @relation("BookingBConflict")
+
+  @@index([facility_id])
+  @@index([date])
+  @@index([start_time, end_time])
+  @@map("bookings")
+}
+
+model ResourceRequest {
+  id                    String             @id @default(uuid())
+  user_id               String
+  facility_type         String
+  capacity_required     Int
+  date                  String
+  start_time            String
+  end_time              String
+  purpose               String
+  preferred_facility_id String?
+  priority              String             @default("MEDIUM")
+  status                String             @default("PENDING")
+  created_at            DateTime           @default(now())
+
+  user                  User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  request_equipment     RequestEquipment[]
+  allocations           Allocation[]
+
+  @@index([date])
+  @@index([status])
+  @@map("resource_requests")
+}
+
+model RequestEquipment {
+  id           String          @id @default(uuid())
+  request_id   String
+  equipment_id String
+  quantity     Int             @default(1)
+
+  request      ResourceRequest @relation(fields: [request_id], references: [id], onDelete: Cascade)
+  equipment    Equipment       @relation(fields: [equipment_id], references: [id], onDelete: Cascade)
+
+  @@map("request_equipment")
+}
+
+model Allocation {
+  id                 String          @id @default(uuid())
+  request_id         String
+  facility_id        String
+  score              Int
+  capacity_score     Int
+  equipment_score    Int
+  availability_score Int
+  utilization_score  Int
+  preference_score   Int
+  demand_score       Int
+  explanation        String          @db.Text
+  created_at         DateTime        @default(now())
+
+  request            ResourceRequest @relation(fields: [request_id], references: [id], onDelete: Cascade)
+  facility           Facility        @relation(fields: [facility_id], references: [id], onDelete: Cascade)
+
+  @@map("allocations")
+}
+
+model Conflict {
+  id            String       @id @default(uuid())
+  booking_a_id  String
+  booking_b_id  String?
+  conflict_type ConflictType @default(DOUBLE_BOOKING)
+  severity      String       @default("CRITICAL")
+  status        String       @default("OPEN")
+  resolution    String?      @db.Text
+  created_at    DateTime     @default(now())
+  resolved_at   DateTime?
+
+  booking_a     Booking      @relation("BookingAConflict", fields: [booking_a_id], references: [id], onDelete: Cascade)
+  booking_b     Booking?     @relation("BookingBConflict", fields: [booking_b_id], references: [id], onDelete: Cascade)
+
+  @@map("conflicts")
+}
+
+model Maintenance {
+  id          String   @id @default(uuid())
+  facility_id String
+  start_date  String
+  end_date    String
+  reason      String
+  status      String   @default("SCHEDULED")
+
+  facility    Facility @relation(fields: [facility_id], references: [id], onDelete: Cascade)
+
+  @@map("maintenance")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  user_id     String
+  action      String
+  entity_type String
+  entity_id   String
+  details     String   @db.Text
+  created_at  DateTime @default(now())
+
+  user        User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("audit_logs")
+}
